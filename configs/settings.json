@@ -1,0 +1,4 @@
+{"RAW_DATA_DIR": "./data/", 
+"TRAIN_DATA_CLEAN_PATH": "./data/train_final.pkl", 
+"TEST_DATA_CLEAN_PATH": "./data/test_final.pkl", 
+"MODEL_DIR": "./model/"}
