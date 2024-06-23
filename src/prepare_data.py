@@ -1,8 +1,135 @@
+#
+'''python3 ../src/prepare_data.py'''
 from itertools import combinations
 import pandas as pd
 import polars as pl
+from pyarrow import parquet as pq
 import reduce_mem_df
 
+def generate_features_no_hist_polars(df,
+                                     index_stock_weights,
+                                     scale_dict):
+    '''Arguments depends on split'''
+
+    #df = reduce_mem_df.numeric(df)
+    
+    df = stock_ind_weight(df, index_stock_weights)
+    df = scale_size_cols(df, scale_dict)
+    
+    df = imbalance_flag(df)    
+    df = pl.from_pandas(df)
+    
+    
+    feas_list = ['stock_id','seconds_in_bucket','imbalance_size','imbalance_buy_sell_flag',
+               'reference_price','matched_size','far_price','near_price','bid_price','bid_size',
+                'ask_price','ask_size','wap','scale_imbalance_size','scale_matched_size','scale_bid_size','scale_ask_size'
+                 ,'auc_bid_size','auc_ask_size']
+    df = feats_orderbook(df)
+    feas_list.extend(['ask_money', 'bid_money', 'ask_auc_money','bid_auc_money',"ask_size_all","bid_size_all","volumn_size_all",
+                      'volumn_money','volume_cont',"volumn_auc","volumn_auc_money","mid_price",
+                      'mid_price_near_far','price_diff_ask_bid',"price_div_ask_bid","flag_imbalance_size","div_flag_imbalance_size_2_balance",
+                     "price_pressure","price_pressure_v2","depth_pressure","flag_scale_imbalance_size","diff_ask_bid_size"])        
+    df = scalar_divs(df, feas_list)
+    df = imbalances_volumes(df, feas_list)
+    df = imbalances_prices(df,feas_list)
+    df = urgencies(df)
+    
+    feas_list = ['imb1_wap_mid_price', 'imb1_ask_money_bid_money', 'imb1_volume_cont_volumn_auc', 'imb1_reference_price_ask_price', 
+                 'imb1_reference_price_mid_price', 'seconds_in_bucket', 'div_flag_imbalance_size_2_balance', 'ask_price', 
+                 'imb1_reference_price_bid_price', 'scale_matched_size', 'imb1_near_price_wap', 'volumn_auc_money', 'imb1_far_price_wap', 
+                 'bid_size', 'scale_bid_size', 'bid_size_all']
+    df = stat_of_significant(df)
+    
+    feas_list = ['imb1_wap_mid_price', 'imb1_ask_money_bid_money', 'imb1_volume_cont_volumn_auc', 
+                     'imb1_reference_price_ask_price', 'imb1_reference_price_mid_price', 
+                     'seconds_in_bucket', 'div_flag_imbalance_size_2_balance', 'ask_price', 
+                     'imb1_reference_price_bid_price', 'scale_matched_size', 'imb1_near_price_wap', 
+                     'volumn_auc_money', 'imb1_far_price_wap', 'bid_size', 'scale_bid_size', 'bid_size_all', 
+                     'rolling18_mean_imb1_auc_ask_size_auc_bid_size', 'rolling3_mean_div_flag_imbalance_size_2_balance', 
+                     'rolling60_std_div_flag_imbalance_size_2_balance', 'rolling36_mean_flag_imbalance_size', 
+                     'rolling3_std_imb1_auc_ask_size_auc_bid_size', 'rolling18_mean_imb1_ask_size_all_bid_size_all', 
+                     'rolling6_mean_div_flag_imbalance_size_2_balance', 'rolling6_std_imb1_auc_ask_size_auc_bid_size', 
+                     'rolling3_mean_imb1_auc_ask_size_auc_bid_size', 'rolling60_std_imb1_auc_ask_size_auc_bid_size', 
+                     'rolling6_std_bid_size_all', 'rolling3_std_bid_size_all', 'rolling3_mean_bid_size_all', 
+                     'rolling18_std_bid_auc_money', 'rolling36_mean_bid_auc_money',"rolling60_mean_imb1_reference_price_wap",
+                    'rolling18_mean_imb1_reference_price_wap', 'rolling3_mean_imb1_reference_price_mid_price']
+    df = imb_spread_momentum(df,feas_list)
+    df = univar_diff(df, feas_list)
+    df = target_shift(df)
+    df = stat_target(df) 
+    
+    keep_cols_new = ['rolling48_mean_target_mock_shift3', 'rolling48_mean_target_mock_shift1', 'rolling48_mean_target_mock_shift12',
+'rolling1_mean_target_mock_shift6', 'rolling24_mean_target_mock_shift6','rolling24_mean_target_mock_shift12',]
+    feas_list.extend(keep_cols_new)
+    df = significants_base_transforms(df)
+    feas_list.extend(['div_shift6_imb1_auc_ask_size_auc_bid_size',
+                     'diff_shift6_price_pressure_v2',
+                     'shift1_price_pressure_v2',
+                     'div_shift3_flag_imbalance_size',
+                     'div_shift12_imb1_auc_ask_size_auc_bid_size',
+                     'div_shift3_scale_matched_size',
+                     'diff_shift6_flag_imbalance_size',
+                     'shift12_imb1_auc_ask_size_auc_bid_size',
+                     'div_shift12_price_pressure_v2',
+                     'shift6_flag_imbalance_size',
+                     'diff_shift3_imb1_auc_ask_size_auc_bid_size',
+                     'div_shift12_flag_imbalance_size',
+                     'shift12_flag_imbalance_size'])
+
+    df = ind_weighted_significants2(df,feas_list)
+    # MACD
+    rsi_cols = ["mid_price_near_far","imb1_reference_price_wap","near_price",]
+    add_cols = []
+    for col in rsi_cols:
+        for window_size in [3,6,12,24,48]:
+            add_cols.append(pl.col(col).ewm_mean(span=window_size, adjust=False).over('stock_id','date_id').alias(f"rolling_ewm_{window_size}_{col}"))
+    df = df.with_columns(add_cols)
+    
+    add_cols = []
+    for col in rsi_cols:
+        for w1,w2 in zip((3,6,12,24),(6,12,24,48)):
+            add_cols.append((pl.col(f"rolling_ewm_{w1}_{col}") - pl.col(f"rolling_ewm_{w2}_{col}")).alias(f"dif_{col}_{w1}_{w2}"))
+    df = df.with_columns(add_cols)
+    
+    add_cols = []
+    for col in rsi_cols:
+        for w1,w2 in zip((3,6,12,24),(6,12,24,48)):
+            add_cols.append(pl.col(f"dif_{col}_{w1}_{w2}").ewm_mean(span=9, adjust=False).over('stock_id','date_id').alias(f"dea_{col}_{w1}_{w2}"))
+    df = df.with_columns(add_cols)
+    
+    add_cols = []
+    for col in rsi_cols:
+        for w1,w2 in zip((3,6,12,24),(6,12,24,48)):
+            add_cols.append((pl.col(f"dif_{col}_{w1}_{w2}") - pl.col(f"dea_{col}_{w1}_{w2}")).alias(f"macd_{col}_{w1}_{w2}"))
+    
+    feas_list.extend(['macd_imb1_reference_price_wap_12_24',
+ 'dif_imb1_reference_price_wap_3_6',
+ 'macd_mid_price_near_far_12_24',
+ 'dif_near_price_3_6',
+ 'macd_near_price_24_48',
+ 'dea_imb1_reference_price_wap_12_24',
+ 'macd_near_price_12_24',
+ 'rolling_ewm_24_imb1_reference_price_wap',
+ 'dif_near_price_6_12',
+ 'dea_mid_price_near_far_6_12',
+ 'dea_near_price_24_48',
+ 'rolling_ewm_12_imb1_reference_price_wap',
+ 'dif_imb1_reference_price_wap_12_24'])
+    df = df.with_columns(add_cols)
+    
+    add_cols = []
+    for col in ["target"]:
+        for window_size in [1,2,3,5,10,15,20,25,30,35,40,45,60]:
+            add_cols.append(pl.col(col).shift(1).rolling_mean(window_size=window_size,min_periods=1).over('stock_id','seconds_in_bucket').alias(f'rolling_mean_{window_size}_{col}_second'))
+            add_cols.append(pl.col(col).shift(1).rolling_std(window_size=window_size,min_periods=1).over('stock_id','seconds_in_bucket').alias(f'rolling_std_{window_size}_{col}_second'))
+
+            
+            feas_list.extend([f'rolling_mean_{window_size}_{col}_second',f'rolling_std_{window_size}_{col}_second',])
+
+    df = df.with_columns(add_cols)
+    
+    return df, feas_list
+    
 def stock_ind_weight(df, weights):
     weight_df = pd.DataFrame()
     weight_df['stock_id'] = list(range(200))
@@ -25,9 +152,9 @@ def scale_size_cols(df,
 
     return df
 def imbalance_flag(df):
-    #buy-side imbalance; 1
+    '''buy-side imbalance; 1
     #sell-side imbalance; -1
-    #no imbalance; 0
+    #no imbalance; 0'''
     df['auc_bid_size'] = df['matched_size']
     df['auc_ask_size'] = df['matched_size']
     df.loc[df['imbalance_buy_sell_flag']==1,'auc_bid_size'] += df.loc[df['imbalance_buy_sell_flag']==1,
@@ -124,7 +251,7 @@ def stat_of_significant(df):
             add_cols.append(pl.col(col).rolling_mean(window_size=window,min_periods=1).over('stock_id','date_id').alias(f'rolling{window}_mean_{col}'))
             add_cols.append(pl.col(col).rolling_std(window_size=window,min_periods=1).over('stock_id','date_id').alias(f'rolling{window}_std_{col}'))
   
-            #feas_list.extend([f'rolling{window}_mean_{col}',f'rolling{window}_std_{col}'])
+            
     return df.with_columns(add_cols)
 def imb_spread_momentum(df,feas_list):
         
@@ -139,7 +266,7 @@ def imb_spread_momentum(df,feas_list):
     feas_list.extend(["imbalance_momentum"])
     return df
 def univar_diff(df, feas_list):
-    #Calculate diff features for specific columns
+    'Calculate diff features for specific columns'
     add_cols = []
     for col in ['ask_price',
  'bid_price',
@@ -185,7 +312,6 @@ def target_shift(df):
         df = df.with_columns([
             pl.col("target_mock").shift(shift_period).over("stock_id","date_id").alias(f"target_mock_shift{shift_period}"),
         ])
-        print(f"{shift_period} is done")
     return df
 def stat_target(df):
     add_cols = []
@@ -226,150 +352,8 @@ def ind_weighted_significants2(df,feas_list):
         
         feas_list.append(f"global_{col}")
         
-    return df.with_columns(add_cols)
-#from memory_profiler import profile
-#@profile
-def generate_features_no_hist_polars(df,
-                                     index_stock_weights,
-                                     scale_dict):
-    '''Arguments depends on split'''
-    #print(-1)
-    #reduce_mem_df.numeric(df)
-    #print(0)
-    df = stock_ind_weight(df, index_stock_weights)
-    df = scale_size_cols(df, scale_dict)
+    return df.with_columns(add_cols)        
     
-    df = imbalance_flag(df)    
-    print(1)
-    df = pl.from_pandas(df)
-    
-    
-    print(2)
-    feas_list = ['stock_id','seconds_in_bucket','imbalance_size','imbalance_buy_sell_flag',
-               'reference_price','matched_size','far_price','near_price','bid_price','bid_size',
-                'ask_price','ask_size','wap','scale_imbalance_size','scale_matched_size','scale_bid_size','scale_ask_size'
-                 ,'auc_bid_size','auc_ask_size']
-    df = feats_orderbook(df)
-    feas_list.extend(['ask_money', 'bid_money', 'ask_auc_money','bid_auc_money',"ask_size_all","bid_size_all","volumn_size_all",
-                      'volumn_money','volume_cont',"volumn_auc","volumn_auc_money","mid_price",
-                      'mid_price_near_far','price_diff_ask_bid',"price_div_ask_bid","flag_imbalance_size","div_flag_imbalance_size_2_balance",
-                     "price_pressure","price_pressure_v2","depth_pressure","flag_scale_imbalance_size","diff_ask_bid_size"])        
-    df = scalar_divs(df, feas_list)
-    df = imbalances_volumes(df, feas_list)
-    df = imbalances_prices(df,feas_list)
-    df = urgencies(df)
-
-    print(3)
-    
-    feas_list = ['imb1_wap_mid_price', 'imb1_ask_money_bid_money', 'imb1_volume_cont_volumn_auc', 'imb1_reference_price_ask_price', 
-                 'imb1_reference_price_mid_price', 'seconds_in_bucket', 'div_flag_imbalance_size_2_balance', 'ask_price', 
-                 'imb1_reference_price_bid_price', 'scale_matched_size', 'imb1_near_price_wap', 'volumn_auc_money', 'imb1_far_price_wap', 
-                 'bid_size', 'scale_bid_size', 'bid_size_all']
-    df = stat_of_significant(df)
-    print(4)
-    
-    feas_list = ['imb1_wap_mid_price', 'imb1_ask_money_bid_money', 'imb1_volume_cont_volumn_auc', 
-                     'imb1_reference_price_ask_price', 'imb1_reference_price_mid_price', 
-                     'seconds_in_bucket', 'div_flag_imbalance_size_2_balance', 'ask_price', 
-                     'imb1_reference_price_bid_price', 'scale_matched_size', 'imb1_near_price_wap', 
-                     'volumn_auc_money', 'imb1_far_price_wap', 'bid_size', 'scale_bid_size', 'bid_size_all', 
-                     'rolling18_mean_imb1_auc_ask_size_auc_bid_size', 'rolling3_mean_div_flag_imbalance_size_2_balance', 
-                     'rolling60_std_div_flag_imbalance_size_2_balance', 'rolling36_mean_flag_imbalance_size', 
-                     'rolling3_std_imb1_auc_ask_size_auc_bid_size', 'rolling18_mean_imb1_ask_size_all_bid_size_all', 
-                     'rolling6_mean_div_flag_imbalance_size_2_balance', 'rolling6_std_imb1_auc_ask_size_auc_bid_size', 
-                     'rolling3_mean_imb1_auc_ask_size_auc_bid_size', 'rolling60_std_imb1_auc_ask_size_auc_bid_size', 
-                     'rolling6_std_bid_size_all', 'rolling3_std_bid_size_all', 'rolling3_mean_bid_size_all', 
-                     'rolling18_std_bid_auc_money', 'rolling36_mean_bid_auc_money',"rolling60_mean_imb1_reference_price_wap",
-                    'rolling18_mean_imb1_reference_price_wap', 'rolling3_mean_imb1_reference_price_mid_price']
-    df = imb_spread_momentum(df,feas_list)
-    print(5)
-    df = univar_diff(df, feas_list)
-    print(6)
-    df = target_shift(df)
-    print(7)
-    df = stat_target(df) 
-    print(8)
-    
-    keep_cols_new = ['rolling48_mean_target_mock_shift3', 'rolling48_mean_target_mock_shift1', 'rolling48_mean_target_mock_shift12',
-'rolling1_mean_target_mock_shift6', 'rolling24_mean_target_mock_shift6','rolling24_mean_target_mock_shift12',]
-    feas_list.extend(keep_cols_new)
-    df = significants_base_transforms(df)
-    feas_list.extend(['div_shift6_imb1_auc_ask_size_auc_bid_size',
-                     'diff_shift6_price_pressure_v2',
-                     'shift1_price_pressure_v2',
-                     'div_shift3_flag_imbalance_size',
-                     'div_shift12_imb1_auc_ask_size_auc_bid_size',
-                     'div_shift3_scale_matched_size',
-                     'diff_shift6_flag_imbalance_size',
-                     'shift12_imb1_auc_ask_size_auc_bid_size',
-                     'div_shift12_price_pressure_v2',
-                     'shift6_flag_imbalance_size',
-                     'diff_shift3_imb1_auc_ask_size_auc_bid_size',
-                     'div_shift12_flag_imbalance_size',
-                     'shift12_flag_imbalance_size'])
-
-    df = ind_weighted_significants2(df,feas_list)
-    # MACD
-    rsi_cols = ["mid_price_near_far","imb1_reference_price_wap","near_price",]
-    add_cols = []
-    for col in rsi_cols:
-        for window_size in [3,6,12,24,48]:
-            add_cols.append(pl.col(col).ewm_mean(span=window_size, adjust=False).over('stock_id','date_id').alias(f"rolling_ewm_{window_size}_{col}"))
-            #feas_list.append(f"rolling_ewm_{window_size}_{col}")
-    df = df.with_columns(add_cols)
-    
-    add_cols = []
-    for col in rsi_cols:
-        for w1,w2 in zip((3,6,12,24),(6,12,24,48)):
-            add_cols.append((pl.col(f"rolling_ewm_{w1}_{col}") - pl.col(f"rolling_ewm_{w2}_{col}")).alias(f"dif_{col}_{w1}_{w2}"))
-            #feas_list.append(f"dif_{col}_{w1}_{w2}")
-    df = df.with_columns(add_cols)
-    
-    add_cols = []
-    for col in rsi_cols:
-        for w1,w2 in zip((3,6,12,24),(6,12,24,48)):
-            add_cols.append(pl.col(f"dif_{col}_{w1}_{w2}").ewm_mean(span=9, adjust=False).over('stock_id','date_id').alias(f"dea_{col}_{w1}_{w2}"))
-            #feas_list.append(f"dea_{col}_{w1}_{w2}")
-    df = df.with_columns(add_cols)
-    
-    add_cols = []
-    for col in rsi_cols:
-        for w1,w2 in zip((3,6,12,24),(6,12,24,48)):
-            add_cols.append((pl.col(f"dif_{col}_{w1}_{w2}") - pl.col(f"dea_{col}_{w1}_{w2}")).alias(f"macd_{col}_{w1}_{w2}"))
-            #feas_list.append(f"macd_{col}_{w1}_{w2}")
-    
-    feas_list.extend(['macd_imb1_reference_price_wap_12_24',
- 'dif_imb1_reference_price_wap_3_6',
- 'macd_mid_price_near_far_12_24',
- 'dif_near_price_3_6',
- 'macd_near_price_24_48',
- 'dea_imb1_reference_price_wap_12_24',
- 'macd_near_price_12_24',
- 'rolling_ewm_24_imb1_reference_price_wap',
- 'dif_near_price_6_12',
- 'dea_mid_price_near_far_6_12',
- 'dea_near_price_24_48',
- 'rolling_ewm_12_imb1_reference_price_wap',
- 'dif_imb1_reference_price_wap_12_24'])
-    df = df.with_columns(add_cols)
-    
-    add_cols = []
-    for col in ["target"]:
-        # 176 1,2,3,5,10,15,20,25,30
-        # [1,2,3,5,10,15,20,25,30,35,40,45,60] 5.8704926 157
-        # [1,2,3,5,10,15,20,30,45,60] 5.8708683137
-        for window_size in [1,2,3,5,10,15,20,25,30,35,40,45,60]:
-            add_cols.append(pl.col(col).shift(1).rolling_mean(window_size=window_size,min_periods=1).over('stock_id','seconds_in_bucket').alias(f'rolling_mean_{window_size}_{col}_second'))
-            add_cols.append(pl.col(col).shift(1).rolling_std(window_size=window_size,min_periods=1).over('stock_id','seconds_in_bucket').alias(f'rolling_std_{window_size}_{col}_second'))
-
-            
-            feas_list.extend([f'rolling_mean_{window_size}_{col}_second',f'rolling_std_{window_size}_{col}_second',])
-
-    df = df.with_columns(add_cols)
-    
-    
-    return df, feas_list
-        
 if  __name__ == "__main__":
     import json
     import pickle
@@ -385,12 +369,16 @@ if  __name__ == "__main__":
 
     with open(f"../{config['RAW_DATA_DIR']}/scale_dict.pkl", 'rb') as f:
         scale_dict = pickle.load(f)
-
+    print('Reading df_raw')
     df_raw = pd.read_csv(f"../{config['RAW_DATA_DIR']}/train.csv")
 
+    print('Start generate features')
     df, feas_list = generate_features_no_hist_polars(df_raw,
                                           index_stock_weights,
                                           scale_dict)
-    print(f'{df.shape=}')
 
-    
+    pq.write_table(df.to_arrow(), 
+               f"../{config['RAW_DATA_DIR']}/full_features.parquet.gzip", 
+               compression='GZIP')
+
+    print(f'{df.shape=}')

@@ -35,4 +35,4 @@ def numeric(df,
         print('Mem. usage decreased to {:5.2f} Mb ({:.1f}% reduction)'.format(
             end_mem, 100 * (start_mem - end_mem) / start_mem))
         print('reduce memory use:',round(time.time() - start_time,1))
-    #return df
+    return df
