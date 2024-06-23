@@ -1,4 +1,5 @@
-/data/
+/data/*
+!data/**/*.dvc
 **/.ipynb_checkpoints/
 **/__pycache__/
 **/.pytest_cache

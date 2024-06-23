@@ -1,0 +1,5 @@
+outs:
+- md5: 11fe74162fe38614142c8761841d5d43
+  size: 11429459658
+  hash: md5
+  path: full_features.parquet.gzip
