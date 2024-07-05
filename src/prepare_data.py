@@ -15,15 +15,22 @@ def generate_features_no_hist_polars(df,
     
     df = stock_ind_weight(df, index_stock_weights)
     df = scale_size_cols(df, scale_dict)
-    
     df = imbalance_flag(df)    
-    df = pl.from_pandas(df)
     
+    df = pl.from_pandas(df)
+
+    base_features=['imbalance_size', 'reference_price', 'matched_size',
+'far_price', 'near_price', 'bid_price', 'bid_size', 'ask_price',
+'ask_size', 'wap']
+
+    df = agg_by_seconds_in_bucket(df, base_features)
+    df = rank_by_seconds_in_bucket(df, base_features)
     
     feas_list = ['stock_id','seconds_in_bucket','imbalance_size','imbalance_buy_sell_flag',
                'reference_price','matched_size','far_price','near_price','bid_price','bid_size',
                 'ask_price','ask_size','wap','scale_imbalance_size','scale_matched_size','scale_bid_size','scale_ask_size'
                  ,'auc_bid_size','auc_ask_size']
+    
     df = feats_orderbook(df)
     feas_list.extend(['ask_money', 'bid_money', 'ask_auc_money','bid_auc_money',"ask_size_all","bid_size_all","volumn_size_all",
                       'volumn_money','volume_cont',"volumn_auc","volumn_auc_money","mid_price",
@@ -128,8 +135,7 @@ def generate_features_no_hist_polars(df,
 
     df = df.with_columns(add_cols)
     
-    return df, feas_list
-    
+    return df, feas_list   
 def stock_ind_weight(df, weights):
     weight_df = pd.DataFrame()
     weight_df['stock_id'] = list(range(200))
@@ -162,6 +168,53 @@ def imbalance_flag(df):
     df.loc[df['imbalance_buy_sell_flag']==-1,'auc_ask_size'] += df.loc[df['imbalance_buy_sell_flag']==-1,
                                                                       'imbalance_size']
     return df
+def agg_by_seconds_in_bucket(df, base_features):
+    seconds_in_bucket_group = (
+        pl.when(pl.col('seconds_in_bucket') < 300).then(0)
+        .when(pl.col('seconds_in_bucket') < 480).then(1)
+        .otherwise(2)
+        .cast(pl.Float32)
+        .alias('seconds_in_bucket_group')
+    )
+
+    df = df.with_columns(seconds_in_bucket_group)
+
+    group_first_ratio = [
+        (pl.col(col).first() / pl.col(col))
+        .over(['date_id', 'seconds_in_bucket_group', 'stock_id'])
+        .cast(pl.Float32)
+        .alias('{}_group_first_ratio'.format(col))
+        for col in base_features
+    ]
+
+    group_expanding_mean = [
+        (pl.col(col).rolling_mean(100, min_periods=1) / pl.col(col))
+        .over(['date_id', 'seconds_in_bucket_group', 'stock_id'])
+        .cast(pl.Float32)
+        .alias('{}_group_expanding_mean{}'.format(col, 100))
+        for col in base_features
+    ]
+
+    return df.with_columns(group_first_ratio + group_expanding_mean)
+    
+def rank_by_seconds_in_bucket(df, base_features):
+    seconds_in_bucket_group_mean_ratio = [
+        (pl.col(col).mean() / pl.col(col))
+        .over(['date_id', 'seconds_in_bucket'])
+        .cast(pl.Float32)
+        .alias('{}_seconds_in_bucket_group_mean_ratio'.format(col))
+        for col in base_features
+    ]
+
+    seconds_in_bucket_group_rank = [
+        (pl.col(col).rank(descending=True, method='ordinal') / pl.col(col).count())
+        .over(['date_id', 'seconds_in_bucket'])
+        .cast(pl.Float32)
+        .alias('{}_seconds_in_bucket_group_rank'.format(col))
+        for col in base_features
+    ]
+
+    return df.with_columns(seconds_in_bucket_group_mean_ratio + seconds_in_bucket_group_rank)
 def feats_orderbook(df):
     df = df.with_columns([
         (pl.col('ask_size') * pl.col('ask_price')).alias("ask_money"),
