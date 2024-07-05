@@ -6,7 +6,8 @@ Implementation of top solutions of [Optiver - Trading at the Close 2023](https:/
 | - | - | - |
 | 1 | EDA w/ target as stock wap regression restore | ✅  | 
 | 2 | Feature generation, 370+ total | ✅ |
-| 3 | Feature selection with Catboost | ⏳ |
-| 4 | Params optimization with Optuna and MlFlow <br/> resulting in Catboost best model on whole train set | ⏳ |
-| 5 | NannyMl to check perfomance decay for ts splits | ⏳ |
-| 6 | Retrain options and DVC each fited porion | ⏳ |
+| 3 | Batch learning on daily h5 data | ✅ |
+| 4 | Feature selection with Catboost | ⏳ |
+| 5 | Params optimization with Optuna and MlFlow <br/> on selected features | ⏳ |
+| 6 | NannyMl to check perfomance decay for ts splits | ⏳ |
+| 7 | Retrain options and DVC each fited porion | ⏳ |
