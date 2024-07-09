@@ -8,7 +8,7 @@ class WriterWithIntegrity:
 
     def get_train_feats_only(self, df):
         feature_columns = [col for col in df.columns if col not in \
-                           ['date_id', *self.integrity_cols, *self.target_col]]
+                           ['date_id', self.target_col, *self.integrity_cols]]
         return feature_columns
     
     def save_metadata(self, df, filepath)->None:
