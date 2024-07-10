@@ -1,8 +1,10 @@
 import h5py
 import numpy as np
+from typing import List, Tuple, Union 
 
 class WriterWithIntegrity:
-    def __init__(self, integrity_cols, target_col):
+    def __init__(self, integrity_cols: List[str],
+                        target_col: str):
         self.integrity_cols = integrity_cols
         self.target_col = target_col
 
@@ -42,7 +44,10 @@ def load_metadata(filepath)->np.ndarray:
     with h5py.File(filepath, 'r') as f:
         return f['date_ids'][:]
 
-def load_daily_minimal(date_id, folder_daily_h5)->(np.ndarray,np.ndarray):
+def load_daily_minimal(date_id: Union[int, str], 
+                       folder_daily_h5,
+                       features_selected: Tuple[str]=(),
+                       float32: bool = False)->(np.ndarray,np.ndarray):
     '''Train optimized usage. Ommit feature names and integrity data'''
     filepath=f'{folder_daily_h5}/{date_id}.h5'
     with h5py.File(filepath, 'r') as f:
@@ -50,17 +55,29 @@ def load_daily_minimal(date_id, folder_daily_h5)->(np.ndarray,np.ndarray):
         target = f['data']['target'][:]
 
         features_group = f['data']['features']
-        feature_list = [features_group[name][:] for name in features_group.keys()]
-        features = np.array(feature_list).T 
-
+        if features_selected:
+            values_lists = [features_group[name][:] for name in features_selected]
+        else:
+            values_lists = [features_group[name][:] for name in features_group.keys()]
+        
+        if float32:
+            features = np.array(values_lists,  dtype=np.float32).T 
+        else:
+            features = np.array(values_lists).T
+            
     return features, target
 
-def stacked_daily_data(date_ids, folder_daily_h5)->(np.ndarray,np.ndarray):
+def stacked_daily_data(date_ids: Union[List[int], List[str]], 
+                       folder_daily_h5,
+                       features_selected: Tuple[str]=(),
+                       float32: bool = False)->(np.ndarray,np.ndarray):
         features_stacked = []
         labels_stacked = []
         for date_id in date_ids:
             daily_features, daily_labels = load_daily_minimal(date_id, 
-                                                          folder_daily_h5)
+                                                              folder_daily_h5,
+                                                              features_selected,
+                                                              float32)
             
             features_stacked.append(daily_features)
             labels_stacked.append(daily_labels)
