@@ -1,0 +1,23 @@
+name: boosting_mle
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - catboost
+  - ipykernel
+  - dvc
+  - mlflow
+  - polars
+  - freetype=2.10.4
+  - ca-certificates
+  - certifi
+  - openssl
+  - pandas=2.0
+  - python=3.11
+  - filprofiler
+  - pip
+  - optuna
+  - h5py
+  - nbformat[version='>=4.2.0']
+  - matplotlib
+prefix: /home/t3600/mambaforge/envs/boosting_mle
