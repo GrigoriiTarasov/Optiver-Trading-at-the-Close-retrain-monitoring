@@ -6,9 +6,10 @@ import polars as pl
 from pyarrow import parquet as pq
 import reduce_mem_df
 
-def generate_features_no_hist_polars(df,
+def generate_features_no_hist_polars(df: pd.DataFrame,
                                      index_stock_weights,
-                                     scale_dict):
+                                     scale_dict,
+                                     target_feas=pl.DataFrame()):
     '''Arguments depends on split'''
 
     #df = reduce_mem_df.numeric(df)
@@ -110,32 +111,55 @@ def generate_features_no_hist_polars(df,
             add_cols.append((pl.col(f"dif_{col}_{w1}_{w2}") - pl.col(f"dea_{col}_{w1}_{w2}")).alias(f"macd_{col}_{w1}_{w2}"))
     
     feas_list.extend(['macd_imb1_reference_price_wap_12_24',
- 'dif_imb1_reference_price_wap_3_6',
- 'macd_mid_price_near_far_12_24',
- 'dif_near_price_3_6',
- 'macd_near_price_24_48',
- 'dea_imb1_reference_price_wap_12_24',
- 'macd_near_price_12_24',
- 'rolling_ewm_24_imb1_reference_price_wap',
- 'dif_near_price_6_12',
- 'dea_mid_price_near_far_6_12',
- 'dea_near_price_24_48',
- 'rolling_ewm_12_imb1_reference_price_wap',
- 'dif_imb1_reference_price_wap_12_24'])
+                     'dif_imb1_reference_price_wap_3_6',
+                     'macd_mid_price_near_far_12_24',
+                     'dif_near_price_3_6',
+                     'macd_near_price_24_48',
+                     'dea_imb1_reference_price_wap_12_24',
+                     'macd_near_price_12_24',
+                     'rolling_ewm_24_imb1_reference_price_wap',
+                     'dif_near_price_6_12',
+                     'dea_mid_price_near_far_6_12',
+                     'dea_near_price_24_48',
+                     'rolling_ewm_12_imb1_reference_price_wap',
+                     'dif_imb1_reference_price_wap_12_24'])
     df = df.with_columns(add_cols)
+
+    if target_feas.is_empty():
+        # historical
+        add_cols = rolling_target_stat(feas_list)
+        df = df.with_columns(add_cols)
+    else:
+        # infer
+        df = df.join(target_feas,
+                     how='left',
+                     on=['stock_id','date_id','seconds_in_bucket'])
+        feas_list.extend([f'rolling_mean_{window_size}_{col}_second',
+                          f'rolling_std_{window_size}_{col}_second',])
+        
+    return df, feas_list   
     
+def rolling_target_stat(feas_list,
+                        window_sizes=(1,2,3,5,10,15,20,25,30,35,40,45,60)):
     add_cols = []
     for col in ["target"]:
-        for window_size in [1,2,3,5,10,15,20,25,30,35,40,45,60]:
-            add_cols.append(pl.col(col).shift(1).rolling_mean(window_size=window_size,min_periods=1).over('stock_id','seconds_in_bucket').alias(f'rolling_mean_{window_size}_{col}_second'))
-            add_cols.append(pl.col(col).shift(1).rolling_std(window_size=window_size,min_periods=1).over('stock_id','seconds_in_bucket').alias(f'rolling_std_{window_size}_{col}_second'))
-
+        for window_size in window_sizes:
+            add_cols.append(\
+                pl.col(col).shift(1).rolling_mean(window_size=window_size,
+                                                  min_periods=1).over('stock_id',
+                                                                      'seconds_in_bucket').alias(\
+                                                  f'rolling_mean_{window_size}_{col}_second'))
+            add_cols.append(\
+                pl.col(col).shift(1).rolling_std(window_size=window_size,
+                                                 min_periods=1).over('stock_id',
+                                                                     'seconds_in_bucket').alias(\
+                                                 f'rolling_std_{window_size}_{col}_second'))
             
-            feas_list.extend([f'rolling_mean_{window_size}_{col}_second',f'rolling_std_{window_size}_{col}_second',])
+            feas_list.extend([f'rolling_mean_{window_size}_{col}_second',
+                              f'rolling_std_{window_size}_{col}_second',])
 
-    df = df.with_columns(add_cols)
-    
-    return df, feas_list   
+    return add_cols
+
 def stock_ind_weight(df, weights):
     weight_df = pd.DataFrame()
     weight_df['stock_id'] = list(range(200))
@@ -145,6 +169,7 @@ def stock_ind_weight(df, weights):
                   how='left',
                   on=['stock_id'])
     return df
+    
 def scale_size_cols(df,
                     scale_dict,
                     size_col = ['imbalance_size','matched_size','bid_size','ask_size']):
