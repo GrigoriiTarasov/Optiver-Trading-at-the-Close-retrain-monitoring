@@ -22,23 +22,32 @@ class WriterWithIntegrity:
             f.create_dataset('date_ids', data=date_ids)
             f.create_dataset('column_names', data=column_names)
 
-    def write_daily_hdf5(self, df, filename)->None:
+    def write_daily_hdf5(self, df, filename, target=True)->None:
         with h5py.File(filename, 'w') as f:
             
             integrity_group = f.create_group('integrity_cols')
             for column in self.integrity_cols:
                 integrity_group.create_dataset(column, 
                                                data=df[column].to_numpy())
-    
-            f.create_dataset('data/target', 
-                             data=df[self.target_col].to_numpy())
-    
+            if target:
+                self.create_target(f,
+                                  df[self.target_col].to_numpy())
+            
             features_group = f.create_group('data/features')
             
             feature_columns = self.get_train_feats_only(df)
             for column in feature_columns:
                 features_group.create_dataset(column, 
                                               data=df[column].to_numpy())
+
+    def create_target(self, f: h5py.File,
+                      target: np.ndarray):
+        f.create_dataset('data/target', 
+                         data=target)
+
+    def add_target(filepath, target: np.ndarray):
+        with h5py.File(filepath, 'r+') as f:
+            self.create_target(f, target)
 
 def load_metadata(filepath)->np.ndarray:
     with h5py.File(filepath, 'r') as f:
